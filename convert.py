@@ -34,25 +34,7 @@ def read_text(path: str) -> str:
     raise RuntimeError(f"알 수 없는 인코딩: {path}")
 
 
-# ---------- 1. 버스 정류장 ----------
-def convert_bus_stop():
-    src = os.path.join(DATA_DIR, "bus_stop.csv")
-    dst = os.path.join(DATA_DIR, "bus_stop_utf8.csv")
-    text = read_text(src)
-
-    rows = []
-    reader = csv.reader(text.splitlines())
-    header = next(reader, None)
-    for cols in reader:
-        if len(cols) >= 5:
-            rows.append({"정류장명": cols[1], "위도": cols[3], "경도": cols[4]})
-
-    df = pd.DataFrame(rows)
-    df.to_csv(dst, index=False, encoding="utf-8-sig")
-    print(f"  → {dst} ({len(df)}건)")
-
-
-# ---------- 2. 도시공원 ----------
+# ---------- 1. 도시공원 ----------
 def convert_park():
     src = os.path.join(DATA_DIR, "전북특별자치도_전주시_도시공원정보_20250210.csv")
     dst = os.path.join(DATA_DIR, "park_utf8.csv")
@@ -177,10 +159,8 @@ def convert_parking():
 
 
 if __name__ == "__main__":
-    print("[1/3] 버스 정류장 변환")
-    convert_bus_stop()
-    print("[2/3] 도시공원 변환")
+    print("[1/2] 도시공원 변환")
     convert_park()
-    print("[3/3] 공영주차장 변환 (지오코딩 필요, 시간이 걸립니다)")
+    print("[2/2] 공영주차장 변환 (지오코딩 필요, 시간이 걸립니다)")
     convert_parking()
     print("완료.")
