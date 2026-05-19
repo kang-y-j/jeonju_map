@@ -1,2 +1,6 @@
 __pycache__/
 .claude/
+venv/
+data/geocode_cache.json
+venv/
+data/geocode_cache.json

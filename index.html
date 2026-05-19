@@ -1,38 +1,306 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
-  <head>
-    <meta charset="utf-8" />
-    <title>전주시 버스정류장 지도</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
-    <style>
-      #map {
-        height: 100vh;
-        width: 100%;
-      }
-      body {
-        margin: 0;
-      }
-    </style>
-  </head>
-  <body>
-    <div id="map"></div>
-    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-    <script>
-      const map = L.map("map").setView([35.8242, 127.148], 13); // 전주 중심
+<head>
+  <meta charset="utf-8">
+  <title>전주시 지도</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { display: flex; height: 100vh; font-family: sans-serif; }
 
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(
-        map,
+    #sidebar {
+      width: 300px;
+      background: #fff;
+      box-shadow: 2px 0 8px rgba(0,0,0,0.1);
+      display: flex;
+      flex-direction: column;
+      z-index: 1000;
+    }
+
+    #sidebar h1 {
+      padding: 16px;
+      font-size: 16px;
+      background: #2563eb;
+      color: white;
+    }
+
+    #radius-btns {
+      display: flex;
+      gap: 8px;
+      padding: 12px;
+    }
+
+    .radius-btn {
+      flex: 1;
+      padding: 6px 0;
+      border: 1px solid #2563eb;
+      border-radius: 8px;
+      background: white;
+      color: #2563eb;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .radius-btn.active {
+      background: #2563eb;
+      color: white;
+    }
+
+    #category-btns {
+      display: flex;
+      gap: 6px;
+      padding: 0 12px 12px;
+    }
+
+    .cat-btn {
+      flex: 1;
+      padding: 6px 0;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      background: white;
+      font-size: 12px;
+      cursor: pointer;
+      color: #555;
+    }
+
+    .cat-btn.active { color: white; border-color: transparent; }
+    .cat-btn[data-cat="bus"].active     { background: #1976d2; }
+    .cat-btn[data-cat="park"].active    { background: #2e7d32; }
+    .cat-btn[data-cat="parking"].active { background: #ef6c00; }
+
+    #search {
+      margin: 0 12px 12px;
+      padding: 8px 12px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 14px;
+      outline: none;
+    }
+
+    #count {
+      padding: 0 12px 8px;
+      font-size: 12px;
+      color: #888;
+    }
+
+    #list {
+      overflow-y: auto;
+      flex: 1;
+    }
+
+    .item {
+      padding: 10px 16px;
+      border-bottom: 1px solid #f0f0f0;
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    .item:hover { background: #eff6ff; }
+
+    .item .badge {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+    .item .meta { display: block; color: #888; font-size: 11px; margin-top: 2px; }
+    .item .dist { float: right; color: #aaa; font-size: 11px; }
+
+    #map { flex: 1; }
+  </style>
+</head>
+<body>
+  <div id="sidebar">
+    <h1>🗺️ 전주시 지도</h1>
+    <div id="radius-btns">
+      <button class="radius-btn active" onclick="changeRadius(1, this)">1km</button>
+      <button class="radius-btn" onclick="changeRadius(5, this)">5km</button>
+      <button class="radius-btn" onclick="changeRadius(10, this)">10km</button>
+    </div>
+    <div id="category-btns">
+      <button class="cat-btn active" data-cat="park" onclick="toggleCat(this)">🌳 공원</button>
+      <button class="cat-btn active" data-cat="parking" onclick="toggleCat(this)">🅿️ 주차장</button>
+      <button class="cat-btn" data-cat="bus" onclick="toggleCat(this)">🚌 버스</button>
+    </div>
+    <input id="search" type="text" placeholder="이름/주소 검색..."/>
+    <div id="count"></div>
+    <div id="list"></div>
+  </div>
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script>
+    const map = L.map('map');
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+    const CATS = {
+      bus:     { color: "#1976d2", icon: "🚌", nameField: "정류장명" },
+      park:    { color: "#2e7d32", icon: "🌳", nameField: "공원명" },
+      parking: { color: "#ef6c00", icon: "🅿️", nameField: "주차장명" },
+    };
+
+    let allData = [];      // [{ cat, name, address, lat, lng, raw }]
+    let markers = [];      // 현재 그려진 Leaflet 마커
+    let activeCats = new Set(["park", "parking"]);
+    let currentLat, currentLng;
+    let currentRadius = 1; // km
+
+    const DEFAULT_LAT = 35.8211;
+    const DEFAULT_LNG = 127.1153;
+    const radiusZoom = { 1: 15, 5: 13, 10: 12 };
+
+    // ===== 거리 =====
+    function getDistance(lat1, lng1, lat2, lng2) {
+      const R = 6371;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLng = (lng2 - lng1) * Math.PI / 180;
+      const a = Math.sin(dLat/2) ** 2 +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLng/2) ** 2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    }
+
+    const fmtKm = (km) => km < 1 ? `${Math.round(km * 1000)}m` : `${km.toFixed(2)}km`;
+
+    // ===== 마커 아이콘 =====
+    const dotIcon = (color) => L.divIcon({
+      className: "",
+      html: `<div style="width:12px;height:12px;border-radius:50%;background:${color};border:2px solid white;box-shadow:0 0 2px rgba(0,0,0,.5);"></div>`,
+      iconSize: [12, 12], iconAnchor: [6, 6],
+    });
+
+    // ===== 팝업 =====
+    function popupHtml(it) {
+      const r = it.raw;
+      if (it.cat === "bus") {
+        return `🚌 <b>${r.정류장명}</b>`;
+      }
+      if (it.cat === "park") {
+        return `<b>🌳 ${r.공원명}</b><br>
+          <small>${r.공원구분 || ""}</small><br>
+          <small>${r.주소 || ""}</small>
+          ${r.면적 ? `<br><small>면적: ${Number(r.면적).toLocaleString()}㎡</small>` : ""}`;
+      }
+      if (it.cat === "parking") {
+        return `<b>🅿️ ${r.주차장명}</b><br>
+          <small>${r.주소 || ""}</small><br>
+          <small>면수: ${r.주차면수 || "-"} · 운영: ${r.운영시간 || "-"}</small><br>
+          <small>요금: ${r.주차요금 || "-"}</small>
+          ${r.전화번호 ? `<br><small>☎ ${r.전화번호}</small>` : ""}`;
+      }
+    }
+
+    // ===== 렌더 =====
+    function renderList(items) {
+      const list = document.getElementById('list');
+      const count = document.getElementById('count');
+      count.textContent = `총 ${items.length}개 (반경 ${currentRadius}km 이내)`;
+      list.innerHTML = items.map((it, i) =>
+        `<div class="item" onclick="focusMarker(${i})">
+          <span class="dist">${fmtKm(it.dist)}</span>
+          <span class="badge" style="background:${CATS[it.cat].color}"></span>
+          ${CATS[it.cat].icon} ${escapeHtml(it.name)}
+          ${it.address ? `<span class="meta">${escapeHtml(it.address)}</span>` : ""}
+        </div>`
+      ).join('');
+    }
+
+    function renderMarkers(items) {
+      markers.forEach(m => map.removeLayer(m));
+      markers = items.map(it =>
+        L.marker([it.lat, it.lng], { icon: dotIcon(CATS[it.cat].color) })
+          .addTo(map)
+          .bindPopup(popupHtml(it))
       );
+    }
 
-      fetch("/api/bus-stops")
-        .then((res) => res.json())
-        .then((data) => {
-          data.forEach((stop) => {
-            L.marker([stop.위도, stop.경도])
-              .addTo(map)
-              .bindPopup(`🚌 ${stop.정류장명}`);
-          });
+    window.focusMarker = function(i) {
+      const m = markers[i];
+      map.setView(m.getLatLng(), 17);
+      m.openPopup();
+    };
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c =>
+        ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+    }
+
+    // ===== 필터/업데이트 =====
+    function update() {
+      const zoom = radiusZoom[currentRadius];
+      map.setView([currentLat, currentLng], zoom);
+
+      const keyword = document.getElementById('search').value.trim().toLowerCase();
+      const items = allData
+        .filter(it => activeCats.has(it.cat))
+        .map(it => ({ ...it, dist: getDistance(currentLat, currentLng, it.lat, it.lng) }))
+        .filter(it => it.dist <= currentRadius)
+        .filter(it => !keyword
+          || it.name.toLowerCase().includes(keyword)
+          || (it.address && it.address.toLowerCase().includes(keyword)))
+        .sort((a, b) => a.dist - b.dist);
+
+      renderList(items);
+      renderMarkers(items);
+    }
+
+    window.changeRadius = function(km, btn) {
+      currentRadius = km;
+      document.querySelectorAll('.radius-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      update();
+    };
+
+    window.toggleCat = function(btn) {
+      const cat = btn.dataset.cat;
+      if (activeCats.has(cat)) { activeCats.delete(cat); btn.classList.remove('active'); }
+      else                     { activeCats.add(cat);    btn.classList.add('active'); }
+      update();
+    };
+
+    function init(lat, lng) {
+      currentLat = lat;
+      currentLng = lng;
+      update();
+    }
+
+    document.getElementById('search').addEventListener('input', () => update());
+
+    // ===== 데이터 로드 =====
+    async function loadAll() {
+      const [bus, parks, parkings] = await Promise.all([
+        fetch('/api/bus-stops').then(r => r.json()),
+        fetch('/api/parks').then(r => r.json()),
+        fetch('/api/parkings').then(r => r.json()),
+      ]);
+      const push = (arr, cat) => arr.forEach(r => {
+        const lat = parseFloat(r.위도), lng = parseFloat(r.경도);
+        if (!isFinite(lat) || !isFinite(lng)) return;
+        allData.push({
+          cat,
+          name: r[CATS[cat].nameField] || "",
+          address: r.주소 || "",
+          lat, lng,
+          raw: r,
         });
-    </script>
-  </body>
+      });
+      push(bus, "bus");
+      push(parks, "park");
+      push(parkings, "parking");
+
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          pos => init(pos.coords.latitude, pos.coords.longitude),
+          () => init(DEFAULT_LAT, DEFAULT_LNG)
+        );
+      } else {
+        init(DEFAULT_LAT, DEFAULT_LNG);
+      }
+    }
+
+    loadAll();
+  </script>
+</body>
 </html>
