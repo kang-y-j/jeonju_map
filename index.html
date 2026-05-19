@@ -146,6 +146,8 @@
     let activeCats = new Set(["park", "parking"]);
     let currentLat, currentLng;
     let currentRadius = 1; // km
+    let userMarker = null; // 드래그 가능한 내 위치 마커
+    let radiusCircle = null; // 반경 시각화 원
 
     const DEFAULT_LAT = 35.8211;
     const DEFAULT_LNG = 127.1153;
@@ -169,6 +171,24 @@
       className: "",
       html: `<div style="width:12px;height:12px;border-radius:50%;background:${color};border:2px solid white;box-shadow:0 0 2px rgba(0,0,0,.5);"></div>`,
       iconSize: [12, 12], iconAnchor: [6, 6],
+    });
+
+    // 내 위치(드래그 가능) 아이콘 — 큰 빨간 핀 + 펄스
+    const userIcon = L.divIcon({
+      className: "",
+      html: `
+        <div style="position:relative;width:36px;height:48px;">
+          <div style="position:absolute;left:8px;top:36px;width:20px;height:8px;border-radius:50%;background:rgba(229,57,53,.3);animation:userPulse 1.6s ease-out infinite;"></div>
+          <svg width="36" height="48" viewBox="0 0 36 48" style="position:absolute;left:0;top:0;filter:drop-shadow(0 2px 3px rgba(0,0,0,.5));">
+            <path d="M18 2 C9 2 2 9 2 18 C2 28 18 46 18 46 C18 46 34 28 34 18 C34 9 27 2 18 2 Z"
+                  fill="#e53935" stroke="white" stroke-width="2.5"/>
+            <circle cx="18" cy="18" r="6" fill="white"/>
+          </svg>
+        </div>
+        <style>@keyframes userPulse{0%{transform:scale(.5);opacity:.9}100%{transform:scale(2.2);opacity:0}}</style>`,
+      iconSize: [36, 48],
+      iconAnchor: [18, 46], // 핀 끝(아래 뾰족한 부분)이 실제 좌표
+      tooltipAnchor: [0, -44],
     });
 
     // ===== 팝업 =====
@@ -227,11 +247,46 @@
         ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
     }
 
-    // ===== 필터/업데이트 =====
-    function update() {
-      const zoom = radiusZoom[currentRadius];
-      map.setView([currentLat, currentLng], zoom);
+    // ===== 내 위치 마커 + 반경 원 =====
+    function setupUserMarker() {
+      if (userMarker) return;
+      userMarker = L.marker([currentLat, currentLng], {
+        icon: userIcon,
+        draggable: true,
+        autoPan: true,
+        zIndexOffset: 1000,
+      })
+        .bindTooltip("📍 내 위치 (드래그하여 이동)", { direction: "top", offset: [0, -10] })
+        .addTo(map);
 
+      userMarker.on("drag", (e) => {
+        // 드래그 중에는 반경 원만 따라오게 (가벼운 업데이트)
+        const { lat, lng } = e.target.getLatLng();
+        if (radiusCircle) radiusCircle.setLatLng([lat, lng]);
+      });
+
+      userMarker.on("dragend", (e) => {
+        const { lat, lng } = e.target.getLatLng();
+        currentLat = lat;
+        currentLng = lng;
+        refresh(); // 지도 위치는 유지, 목록/마커만 갱신
+      });
+    }
+
+    function updateRadiusCircle() {
+      if (radiusCircle) map.removeLayer(radiusCircle);
+      radiusCircle = L.circle([currentLat, currentLng], {
+        radius: currentRadius * 1000, // km → m
+        color: "#2563eb",
+        weight: 1,
+        fillColor: "#2563eb",
+        fillOpacity: 0.06,
+        interactive: false,
+      }).addTo(map);
+    }
+
+    // ===== 필터/업데이트 =====
+    function refresh() {
       const keyword = document.getElementById('search').value.trim().toLowerCase();
       const items = allData
         .filter(it => activeCats.has(it.cat))
@@ -246,6 +301,15 @@
       renderMarkers(items);
     }
 
+    function update() {
+      // 반경 변경/카테고리 변경 시: 지도 중심을 내 위치로 다시 맞추고 반경 원도 갱신
+      const zoom = radiusZoom[currentRadius];
+      map.setView([currentLat, currentLng], zoom);
+      if (userMarker) userMarker.setLatLng([currentLat, currentLng]);
+      updateRadiusCircle();
+      refresh();
+    }
+
     window.changeRadius = function(km, btn) {
       currentRadius = km;
       document.querySelectorAll('.radius-btn').forEach(b => b.classList.remove('active'));
@@ -257,16 +321,17 @@
       const cat = btn.dataset.cat;
       if (activeCats.has(cat)) { activeCats.delete(cat); btn.classList.remove('active'); }
       else                     { activeCats.add(cat);    btn.classList.add('active'); }
-      update();
+      refresh();
     };
 
     function init(lat, lng) {
       currentLat = lat;
       currentLng = lng;
+      setupUserMarker();
       update();
     }
 
-    document.getElementById('search').addEventListener('input', () => update());
+    document.getElementById('search').addEventListener('input', () => refresh());
 
     // ===== 데이터 로드 =====
     async function loadAll() {
