@@ -89,8 +89,16 @@ http://localhost:8000
 ---
 
 ## 📸 스크린샷
+![전주시 지도 메인 화면](./screenshots/main.png)
 
 
+---
+
+## 🚀 배포
+
+Railway를 통해 배포한 데모 사이트에서 직접 체험해볼 수 있습니다.
+
+🔗 **Live Demo:** [web-production-de371.up.railway.app](https://web-production-de371.up.railway.app/)
 
 ---
 
